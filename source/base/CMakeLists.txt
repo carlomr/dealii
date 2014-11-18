@@ -31,6 +31,7 @@ SET(_src
   function_parser.cc
   function_time.cc
   geometry_info.cc
+  gaussjacobi.cc
   index_set.cc
   job_identifier.cc
   logstream.cc
