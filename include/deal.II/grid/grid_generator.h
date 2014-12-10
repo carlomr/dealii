@@ -93,7 +93,8 @@ namespace GridGenerator
   void subdivided_hyper_cube (Triangulation<dim,spacedim>  &tria,
                               const unsigned int   repetitions,
                               const double         left = 0.,
-                              const double         right= 1.);
+                              const double         right= 1.,
+			      const bool           periodic=false);
 
   /**
    * Create a coordinate-parallel brick from the two diagonally opposite

@@ -130,6 +130,25 @@ namespace internal
 // anonymous namespace for internal helper functions
 namespace
 {
+
+  bool matching2d(const Triangulation<2,2>::line_iterator f1, const Triangulation<2,2>::line_iterator f2)  
+  {
+      Point<2> p0,p1,p2,p3;
+      p0 = f1->vertex(0);
+      p1 = f1->vertex(1);
+      p2 = f2->vertex(0);
+      p3 = f2->vertex(1);
+
+      if( f1!=f2 &&
+	  ( (std::abs(p0(0)-p2(0))<1e-10 && std::abs(p1(0)-p3(0))<1e-10 && std::abs(p0(0)-p1(0))>1e-10) || 
+	  (std::abs(p0(0)-p3(0))<1e-10 && std::abs(p1(0)-p2(0))<1e-10 && std::abs(p0(0)-p1(0))>1e-10) ||
+	  (std::abs(p0(1)-p2(1))<1e-10 && std::abs(p1(1)-p3(1))<1e-10 && std::abs(p0(1)-p1(1))>1e-10) ||
+	  (std::abs(p0(1)-p3(1))<1e-10 && std::abs(p1(1)-p2(1))<1e-10 && std::abs(p0(1)-p1(1))>1e-10) ))
+	  return true;
+      else
+	  return false;
+
+  }
   // return whether the given cell is
   // patch_level_1, i.e. determine
   // whether either all or none of
@@ -781,6 +800,8 @@ namespace
     // first index:  dimension (minus 2)
     // second index: local face index
     // third index:  face_orientation (false and true)
+    // comunque, l'idea è che due facce opposte hanno offset opposti
+    // cosi' la salvo separatamente
     static const unsigned int left_right_offset[2][6][2] =
     {
       // quadrilateral
@@ -789,8 +810,8 @@ namespace
         {1,0}, // face 2, face_orientation = false and true
         {0,1}, // face 3, face_orientation = false and true
         {0,0}, // face 4, invalid face
-        {0,0}
-      },// face 5, invalid face
+        {0,0}  // face 5, invalid face
+      },
       // hexahedron
       { {0,1},
         {1,0},
@@ -809,6 +830,9 @@ namespace
     // of the face we will automatically get the
     // active one on the highest level as we loop
     // over cells from lower levels first.
+    //
+
+    const bool periodic = triangulation.is_periodic();
     const typename Triangulation<dim,spacedim>::cell_iterator dummy;
     std::vector<typename Triangulation<dim,spacedim>::cell_iterator>
     adjacent_cells(2*triangulation.n_raw_faces(), dummy);
@@ -832,8 +856,8 @@ namespace
           adjacent_cells[2*face->index() + offset] = cell;
 
           // if this cell is not refined, but the
-          // face is, then we'll have to set our
-          // cell as neighbor for the child faces
+      // face is, then we'll have to set our
+      // cell as neighbor for the child faces
           // as well. Fortunately the normal
           // orientation of children will be just
           // the same.
@@ -893,6 +917,43 @@ namespace
     // have to use the opposite of the
     // left_right_offset in this case as we want
     // the offset of the neighbor, not our own.
+    //TODO: qua identifico le facce al bordo e appaio l'amico periodico
+    //se riuscissi a identificare le coppie di facce periodiche, 
+    //l'unica cosa da cambiare sarebbe cell->face(f) con quella accoppiata
+    //potrei usare una boost::bimap oppure due mappe; ne vale la pena?
+    //oppure per come le devo usare tanto vale farlo e basta
+    if(periodic)
+    {
+	std::vector<typename Triangulation<dim,spacedim>::line_iterator> bound_lines_missing_first,
+	    bound_lines_missing_second;
+	if(dim==2)
+	{
+	    for (cell=triangulation.begin(); cell != endc; ++cell)
+		for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
+		{
+		    const typename Triangulation<dim,spacedim>::face_iterator
+			face=cell->face(f);
+		    if(adjacent_cells[2*face->index()].state() != IteratorState::valid)
+			    
+		    {
+			bound_lines_missing_first.push_back(face);
+		    }
+		    else if(adjacent_cells[2*face->index()+1].state() != IteratorState::valid)
+		    {
+			bound_lines_missing_second.push_back(face);
+		    }
+		}
+	    for(auto f1 : bound_lines_missing_first)
+		for(auto f2 : bound_lines_missing_second)
+		    if(matching2d(f1,f2))
+		    {
+		    	adjacent_cells[2*f1->index()] = adjacent_cells[2*f2->index()];
+		    	adjacent_cells[2*f2->index()+1] = adjacent_cells[2*f1->index()+1];
+		    }
+	}
+	else
+	    Assert(dim==2, ExcNotImplemented());
+    }
     for (cell=triangulation.begin(); cell != endc; ++cell)
       for (unsigned int f=0; f<GeometryInfo<dim>::faces_per_cell; ++f)
         {
@@ -1475,7 +1536,8 @@ namespace internal
       create_triangulation (const std::vector<Point<spacedim> > &v,
                             const std::vector<CellData<1> >     &cells,
                             const SubCellData                   &/*subcelldata*/,
-                            Triangulation<1,spacedim>           &triangulation)
+                            Triangulation<1,spacedim>           &triangulation,
+			    const bool periodic = false)
       {
         AssertThrow (v.size() > 0, ExcMessage ("No vertices given"));
         AssertThrow (cells.size() > 0, ExcMessage ("No cells given"));
@@ -1659,7 +1721,8 @@ namespace internal
       create_triangulation (const std::vector<Point<spacedim> > &v,
                             const std::vector<CellData<2> >     &cells,
                             const SubCellData                   &subcelldata,
-                            Triangulation<2,spacedim>           &triangulation)
+                            Triangulation<2,spacedim>           &triangulation,
+			    bool periodic = false )
       {
         AssertThrow (v.size() > 0, ExcMessage ("No vertices given"));
         AssertThrow (cells.size() > 0, ExcMessage ("No cells given"));
@@ -1765,10 +1828,7 @@ namespace internal
           // exit with an exception
           AssertThrow (* (std::min_element(vertex_touch_count.begin(),
                                            vertex_touch_count.end())) >= 2,
-                       ExcMessage("During creation of a triangulation, a part of the "
-                                  "algorithm encountered a vertex that is part of only "
-                                  "a single adjacent line. However, in 2d, every vertex "
-                                  "needs to be at least part of two lines."));
+                       ExcGridHasInvalidVertices());
         }
 
         // reserve enough space
@@ -1835,52 +1895,58 @@ namespace internal
         }
 
 
+       //[> std::vector<typename Triangulation<dim,spacedim>::line_iterator> bound_lines;<]
+        //for (typename Triangulation<dim,spacedim>::line_iterator
+             //line=triangulation.begin_line();
+             //line!=triangulation.end_line(); ++line)
+	//{
+            //const unsigned int n_adj_cells = adjacent_cells[line->index()].size();
+	    //if(n_adj_cells == 1 && periodic)
+		//bound_lines.push_back(line);
+	//}
+	//for(auto f1 : bound_lines)
+	//{
+	    //for(auto f2 : bound_lines)
+	    //{
+
+		//Point<2> p0,p1,p2,p3;
+		//p0 = f1->vertex(0);
+		//p1 = f1->vertex(1);
+		//p2 = f2->vertex(0);
+		//p3 = f2->vertex(1);
+  
+         //if( (std::abs(p0(0)-p2(0))<1e-10 && std::abs(p1(0)-p3(0))<1e-10 && std::abs(p0(0)-p1(0))>1e-10) || 
+              //(std::abs(p0(0)-p3(0))<1e-10 && std::abs(p1(0)-p2(0))<1e-10 && std::abs(p0(0)-p1(0))>1e-10) ||
+              //(std::abs(p0(1)-p2(1))<1e-10 && std::abs(p1(1)-p3(1))<1e-10 && std::abs(p0(1)-p1(1))>1e-10) ||
+              //(std::abs(p0(1)-p3(1))<1e-10 && std::abs(p1(1)-p2(1))<1e-10 && std::abs(p0(1)-p1(1))>1e-10) )
+
+
+
+		//adjacent_cells[f2->index()].push_back(adjacent_cells[f1->index()][0]);
+	    //}
+	/*}*/
         for (typename Triangulation<dim,spacedim>::line_iterator
              line=triangulation.begin_line();
              line!=triangulation.end_line(); ++line)
           {
             const unsigned int n_adj_cells = adjacent_cells[line->index()].size();
-
-            // assert that every line has one or two adjacent cells.
-            // this has to be the case for 2d triangulations in 2d.
-            // in higher dimensions, this may happen but is not
-            // implemented
-            if (spacedim==2)
-              AssertThrow ((n_adj_cells >= 1) &&
-                           (n_adj_cells <= 2),
-                           ExcInternalError())
-              else
-                AssertThrow ((n_adj_cells >= 1) &&
-                             (n_adj_cells <= 2),
-                             ExcMessage ("You have a line in your triangulation "
-                                         "at which more than two cells come together. "
-                                         "\n\n"
-                                         "This is not currently supported because the "
-                                         "Triangulation class makes the assumption that "
-                                         "every cell has zero or one neighbors behind "
-                                         "each face (here, behind each line), but in your "
-                                         "situation there would be more than one."
-                                         "\n\n"
-                                         "Support for this is not currently implemented. "
-                                         "If you need to work with triangulations where "
-                                         "more than two cells come together at a line, "
-                                         "duplicate the vertices once per cell (i.e., put "
-                                         "multiple vertices at the same physical location, "
-                                         "but using different vertex indices for each) "
-                                         "and then ensure continuity of the solution by "
-                                         "explicitly creating constraints that the degrees "
-                                         "of freedom at these lines have the same "
-                                         "value, using the ConstraintMatrix class."));
+            // assert that every line has
+            // one or two adjacent cells
+            AssertThrow ((n_adj_cells >= 1) &&
+                         (n_adj_cells <= 2),
+                         ExcInternalError());
 
             // if only one cell: line is at
             // boundary -> give it the
             // boundary indicator zero by
             // default
-            if (n_adj_cells == 1)
-              line->set_boundary_id (0);
+            if (n_adj_cells == 1 )
+	    {
+		line->set_boundary_indicator (0);
+	    }
             else
               // interior line -> numbers::internal_face_boundary_id
-              line->set_boundary_id (numbers::internal_face_boundary_id);
+              line->set_boundary_indicator (numbers::internal_face_boundary_id);
             line->set_manifold_id(numbers::flat_manifold_id);
           }
 
@@ -1914,19 +1980,17 @@ namespace internal
 
             // assert that we only set
             // boundary info once
-            AssertThrow (! (line->boundary_id() != 0 &&
-                            line->boundary_id() != numbers::internal_face_boundary_id),
+            AssertThrow (! (line->boundary_indicator() != 0 &&
+                            line->boundary_indicator() != numbers::internal_face_boundary_id),
                          ExcMultiplySetLineInfoOfLine(line_vertices.first,
                                                       line_vertices.second));
 
             // Assert that only exterior lines
             // are given a boundary indicator
-            AssertThrow (! (line->boundary_id() == numbers::internal_face_boundary_id),
-                         ExcInteriorLineCantBeBoundary(line->vertex_index(0),
-                                                       line->vertex_index(1),
-                                                       boundary_line->boundary_id));
+            AssertThrow (! (line->boundary_indicator() == numbers::internal_face_boundary_id),
+                         ExcInteriorLineCantBeBoundary());
 
-            line->set_boundary_id (boundary_line->boundary_id);
+            line->set_boundary_indicator (boundary_line->boundary_id);
             line->set_manifold_id (boundary_line->manifold_id);
           }
 
@@ -1953,7 +2017,299 @@ namespace internal
                                   adjacent_cells[cell->line(side)->index()][0]);
       }
 
+      static
+      void
+      create_triangulation (const std::vector<Point<2> > &v,
+                            const std::vector<CellData<2> >     &cells,
+                            const SubCellData                   &subcelldata,
+                            Triangulation<2,2>           &triangulation,
+			    bool periodic  = false)
+      {
+        AssertThrow (v.size() > 0, ExcMessage ("No vertices given"));
+        AssertThrow (cells.size() > 0, ExcMessage ("No cells given"));
 
+        const unsigned int dim=2;
+        const unsigned int spacedim=2;
+
+        // copy vertices
+        triangulation.vertices = v;
+        triangulation.vertices_used = std::vector<bool> (v.size(), true);
+
+        // make up a list of the needed
+        // lines each line is a pair of
+        // vertices. The list is kept
+        // sorted and it is guaranteed that
+        // each line is inserted only once.
+        // While the key of such an entry
+        // is the pair of vertices, the
+        // thing it points to is an
+        // iterator pointing to the line
+        // object itself. In the first run,
+        // these iterators are all invalid
+        // ones, but they are filled
+        // afterwards
+        std::map<std::pair<int,int>,
+            typename Triangulation<dim,spacedim>::line_iterator> needed_lines;
+        for (unsigned int cell=0; cell<cells.size(); ++cell)
+          {
+            for (unsigned int vertex=0; vertex<4; ++vertex)
+              AssertThrow (cells[cell].vertices[vertex] < triangulation.vertices.size(),
+                           ExcInvalidVertexIndex (cell, cells[cell].vertices[vertex],
+                                                  triangulation.vertices.size()));
+
+            for (unsigned int line=0; line<GeometryInfo<dim>::faces_per_cell; ++line)
+              {
+                // given a line vertex number
+                // (0,1) on a specific line we
+                // get the cell vertex number
+                // (0-4) through the
+                // line_to_cell_vertices
+                // function
+                std::pair<int,int> line_vertices(
+                  cells[cell].vertices[GeometryInfo<dim>::line_to_cell_vertices(line, 0)],
+                  cells[cell].vertices[GeometryInfo<dim>::line_to_cell_vertices(line, 1)]);
+
+                // assert that the line was
+                // not already inserted in
+                // reverse order. This
+                // happens in spite of the
+                // vertex rotation above,
+                // if the sense of the cell
+                // was incorrect.
+                //
+                // Here is what usually
+                // happened when this
+                // exception is thrown:
+                // consider these two cells
+                // and the vertices
+                //  3---4---5
+                //  |   |   |
+                //  0---1---2
+                // If in the input vector
+                // the two cells are given
+                // with vertices <0 1 4 3>
+                // and <4 1 2 5>, in the
+                // first cell the middle
+                // line would have
+                // direction 1->4, while in
+                // the second it would be
+                // 4->1.  This will cause
+                // the exception.
+                AssertThrow (needed_lines.find(std::make_pair(line_vertices.second,
+                                                              line_vertices.first))
+                             ==
+                             needed_lines.end(),
+                             ExcGridHasInvalidCell(cell));
+
+                // insert line, with
+                // invalid iterator if line
+                // already exists, then
+                // nothing bad happens here
+                needed_lines[line_vertices] = triangulation.end_line();
+              }
+          }
+
+
+        // check that every vertex has at
+        // least two adjacent lines
+        {
+          std::vector<unsigned short int> vertex_touch_count (v.size(), 0);
+          typename std::map<std::pair<int,int>,
+                   typename Triangulation<dim,spacedim>::line_iterator>::iterator i;
+          for (i=needed_lines.begin(); i!=needed_lines.end(); i++)
+            {
+              // touch the vertices of
+              // this line
+              ++vertex_touch_count[i->first.first];
+              ++vertex_touch_count[i->first.second];
+            }
+
+          // assert minimum touch count
+          // is at least two. if not so,
+          // then clean triangulation and
+          // exit with an exception
+          AssertThrow (* (std::min_element(vertex_touch_count.begin(),
+                                           vertex_touch_count.end())) >= 2,
+                       ExcGridHasInvalidVertices());
+        }
+
+        // reserve enough space
+        triangulation.levels.push_back (new internal::Triangulation::TriaLevel<dim>);
+        triangulation.faces = new internal::Triangulation::TriaFaces<dim>;
+        triangulation.levels[0]->reserve_space (cells.size(), dim, spacedim);
+        triangulation.faces->lines.reserve_space (0,needed_lines.size());
+        triangulation.levels[0]->cells.reserve_space (0,cells.size());
+
+        // make up lines
+        {
+          typename Triangulation<dim,spacedim>::raw_line_iterator
+          line = triangulation.begin_raw_line();
+          typename std::map<std::pair<int,int>,
+                   typename Triangulation<dim,spacedim>::line_iterator>::iterator i;
+          for (i = needed_lines.begin();
+               line!=triangulation.end_line(); ++line, ++i)
+            {
+              line->set (internal::Triangulation::TriaObject<1>(i->first.first,
+                                                                i->first.second));
+              line->set_used_flag ();
+              line->clear_user_flag ();
+              line->clear_user_data ();
+              i->second = line;
+            }
+        }
+
+
+        // store for each line index
+        // the adjacent cells
+        std::map<int,std::vector<typename Triangulation<dim,spacedim>::cell_iterator> >
+        adjacent_cells;
+
+        // finally make up cells
+        {
+          typename Triangulation<dim,spacedim>::raw_cell_iterator
+          cell = triangulation.begin_raw_quad();
+          for (unsigned int c=0; c<cells.size(); ++c, ++cell)
+            {
+              typename Triangulation<dim,spacedim>::line_iterator
+              lines[GeometryInfo<dim>::lines_per_cell];
+              for (unsigned int line=0; line<GeometryInfo<dim>::lines_per_cell; ++line)
+                lines[line]=needed_lines[std::make_pair(
+                                           cells[c].vertices[GeometryInfo<dim>::line_to_cell_vertices(line, 0)],
+                                           cells[c].vertices[GeometryInfo<dim>::line_to_cell_vertices(line, 1)])];
+
+              cell->set (internal::Triangulation::TriaObject<2> (lines[0]->index(),
+                                                                 lines[1]->index(),
+                                                                 lines[2]->index(),
+                                                                 lines[3]->index()));
+
+              cell->set_used_flag ();
+              cell->set_material_id (cells[c].material_id);
+              cell->set_manifold_id (cells[c].manifold_id);
+              cell->clear_user_data ();
+              cell->set_subdomain_id (0);
+
+              // note that this cell is
+              // adjacent to the four
+              // lines
+              for (unsigned int line=0; line<GeometryInfo<dim>::lines_per_cell; ++line)
+                adjacent_cells[lines[line]->index()].push_back (cell);
+            }
+        }
+
+
+	if(periodic)
+	{
+	    std::vector<typename Triangulation<dim,spacedim>::line_iterator> bound_lines;
+	    //std::cout << "@@@ " << periodic << std::endl;
+	    for (typename Triangulation<dim,spacedim>::line_iterator
+		    line=triangulation.begin_line();
+		    line!=triangulation.end_line(); ++line)
+	    {
+		const unsigned int n_adj_cells = adjacent_cells[line->index()].size();
+		if(n_adj_cells == 1)
+		    bound_lines.push_back(line);
+	    }
+	    //std::cout << "*** " << bound_lines.size() << std::endl;
+	    for(auto f1 : bound_lines)
+		for(auto f2 : bound_lines)
+		    if(matching2d(f1,f2))
+		    {
+			adjacent_cells[f2->index()].push_back(adjacent_cells[f1->index()][0]);
+			//std::cout << "found match: " << f1->index() << "-" << f2->index() << std::endl;
+		    }
+	}
+        for (typename Triangulation<dim,spacedim>::line_iterator
+             line=triangulation.begin_line();
+             line!=triangulation.end_line(); ++line)
+          {
+            const unsigned int n_adj_cells = adjacent_cells[line->index()].size();
+            // assert that every line has
+            // one or two adjacent cells
+            AssertThrow ((n_adj_cells >= 1) &&
+                         (n_adj_cells <= 2),
+                         ExcInternalError());
+
+            // if only one cell: line is at
+            // boundary -> give it the
+            // boundary indicator zero by
+            // default
+            if (n_adj_cells == 1 )
+	    {
+		line->set_boundary_indicator (0);
+		//std::cout << "ççç " << std::endl;
+	    }
+            else
+              // interior line -> numbers::internal_face_boundary_id
+              line->set_boundary_indicator (numbers::internal_face_boundary_id);
+            line->set_manifold_id(numbers::flat_manifold_id);
+          }
+
+        // set boundary indicators where
+        // given
+        std::vector<CellData<1> >::const_iterator boundary_line
+          = subcelldata.boundary_lines.begin();
+        std::vector<CellData<1> >::const_iterator end_boundary_line
+          = subcelldata.boundary_lines.end();
+        for (; boundary_line!=end_boundary_line; ++boundary_line)
+          {
+            typename Triangulation<dim,spacedim>::line_iterator line;
+            std::pair<int,int> line_vertices(std::make_pair(boundary_line->vertices[0],
+                                                            boundary_line->vertices[1]));
+            if (needed_lines.find(line_vertices) != needed_lines.end())
+              // line found in this
+              // direction
+              line = needed_lines[line_vertices];
+            else
+              {
+                // look whether it exists
+                // in reverse direction
+                std::swap (line_vertices.first, line_vertices.second);
+                if (needed_lines.find(line_vertices) != needed_lines.end())
+                  line = needed_lines[line_vertices];
+                else
+                  // line does not exist
+                  AssertThrow (false, ExcLineInexistant(line_vertices.first,
+                                                        line_vertices.second));
+              }
+
+            // assert that we only set
+            // boundary info once
+            AssertThrow (! (line->boundary_indicator() != 0 &&
+                            line->boundary_indicator() != numbers::internal_face_boundary_id),
+                         ExcMultiplySetLineInfoOfLine(line_vertices.first,
+                                                      line_vertices.second));
+
+            // Assert that only exterior lines
+            // are given a boundary indicator
+            AssertThrow (! (line->boundary_indicator() == numbers::internal_face_boundary_id),
+                         ExcInteriorLineCantBeBoundary());
+
+            line->set_boundary_indicator (boundary_line->boundary_id);
+            line->set_manifold_id (boundary_line->manifold_id);
+          }
+
+
+        // finally update neighborship info
+        for (typename Triangulation<dim,spacedim>::cell_iterator
+             cell=triangulation.begin(); cell!=triangulation.end(); ++cell)
+          for (unsigned int side=0; side<4; ++side)
+            if (adjacent_cells[cell->line(side)->index()][0] == cell)
+              // first adjacent cell is
+              // this one
+              {
+                if (adjacent_cells[cell->line(side)->index()].size() == 2)
+                  // there is another
+                  // adjacent cell
+                  cell->set_neighbor (side,
+                                      adjacent_cells[cell->line(side)->index()][1]);
+              }
+        // first adjacent cell is not this
+        // one, -> it must be the neighbor
+        // we are looking for
+            else
+              cell->set_neighbor (side,
+                                  adjacent_cells[cell->line(side)->index()][0]);
+      }
       /**
        * Invent an object which compares two internal::Triangulation::TriaObject<2>
        * against each other. This comparison is needed in order to establish a map
@@ -2005,7 +2361,8 @@ namespace internal
       create_triangulation (const std::vector<Point<spacedim> > &v,
                             const std::vector<CellData<3> >     &cells,
                             const SubCellData                   &subcelldata,
-                            Triangulation<3,spacedim>           &triangulation)
+                            Triangulation<3,spacedim>           &triangulation,
+			    const bool periodic = false)
       {
         AssertThrow (v.size() > 0, ExcMessage ("No vertices given"));
         AssertThrow (cells.size() > 0, ExcMessage ("No cells given"));
@@ -8736,6 +9093,7 @@ Triangulation<dim, spacedim>::
 Triangulation (const MeshSmoothing smooth_grid,
                const bool check_for_distorted_cells)
   :
+  periodic(false),
   smooth_grid(smooth_grid),
   faces(NULL),
   anisotropic_refinement(false),
@@ -9080,7 +9438,8 @@ void
 Triangulation<dim,spacedim>::
 create_triangulation (const std::vector<Point<spacedim> >    &v,
                       const std::vector<CellData<dim> > &cells,
-                      const SubCellData &subcelldata)
+                      const SubCellData &subcelldata,
+		      const bool periodic)
 {
   Assert ((vertices.size() == 0) &&
           (levels.size () == 0) &&
@@ -9093,9 +9452,11 @@ create_triangulation (const std::vector<Point<spacedim> >    &v,
   // try to create a triangulation; if this fails, we still want to
   // throw an exception but if we just do so we'll get into trouble
   // because sometimes other objects are already attached to it:
+  Assert(dim==2 || !periodic, ExcNotImplemented());
+  this->periodic = periodic;
   try
     {
-      internal::Triangulation::Implementation::create_triangulation (v, cells, subcelldata, *this);
+      internal::Triangulation::Implementation::create_triangulation (v, cells, subcelldata, *this, periodic);
     }
   catch (...)
     {

@@ -885,17 +885,72 @@ namespace GridGenerator
   subdivided_hyper_cube (Triangulation<dim,spacedim> &tria,
                          const unsigned int  repetitions,
                          const double        left,
-                         const double        right)
+                         const double        right,
+			 const bool	     periodic)
   {
     Assert (repetitions >= 1, ExcInvalidRepetitions(repetitions));
     Assert (left < right,
             ExcMessage ("Invalid left-to-right bounds of hypercube"));
 
-    Point<spacedim> p0,p1;
-    for (unsigned int i=0; i<dim; ++i)
+    Assert(!periodic || dim==2, ExcNotImplemented());
+    // first generate the necessary
+    // points
+    const double delta = (right-left)/repetitions;
+    std::vector<Point<dim> > points;
       {
-        p0[i] = left;
-        p1[i] = right;
+      case 1:
+        cells.resize (repetitions);
+        for (unsigned int x=0; x<repetitions; ++x)
+          {
+            cells[x].vertices[0] = x;
+            cells[x].vertices[1] = x+1;
+            cells[x].material_id = 0;
+          }
+        break;
+
+      case 2:
+        cells.resize (repetitions*repetitions);
+        for (unsigned int y=0; y<repetitions; ++y)
+          for (unsigned int x=0; x<repetitions; ++x)
+            {
+              const unsigned int c = x  +y*repetitions;
+              cells[c].vertices[0] = x  +y*dy;
+              cells[c].vertices[1] = x+1+y*dy;
+              cells[c].vertices[2] = x  +(y+1)*dy;
+              cells[c].vertices[3] = x+1+(y+1)*dy;
+              cells[c].material_id = 0;
+            }
+        break;
+
+      case 3:
+        cells.resize (repetitions*repetitions*repetitions);
+        for (unsigned int z=0; z<repetitions; ++z)
+          for (unsigned int y=0; y<repetitions; ++y)
+            for (unsigned int x=0; x<repetitions; ++x)
+              {
+                const unsigned int c = x+y*repetitions
+                                       +z*repetitions*repetitions;
+                cells[c].vertices[0] = x  +y*dy    +z*dz;
+                cells[c].vertices[1] = x+1+y*dy    +z*dz;
+                cells[c].vertices[2] = x  +(y+1)*dy+z*dz;
+                cells[c].vertices[3] = x+1+(y+1)*dy+z*dz;
+                cells[c].vertices[4] = x  +y*dy    +(z+1)*dz;
+                cells[c].vertices[5] = x+1+y*dy    +(z+1)*dz;
+                cells[c].vertices[6] = x  +(y+1)*dy+(z+1)*dz;
+                cells[c].vertices[7] = x+1+(y+1)*dy+(z+1)*dz;
+                cells[c].material_id = 0;
+              }
+        break;
+
+      default:
+        // should be trivial to
+        // do for 3d as well, but
+        // am too tired at this
+        // point of the night to
+        // do that...
+        //
+        // contributions are welcome!
+        Assert (false, ExcNotImplemented());
       }
 
     std::vector<unsigned int> reps(dim, repetitions);

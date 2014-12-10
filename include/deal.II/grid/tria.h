@@ -1176,7 +1176,10 @@ private:
    */
   typedef dealii::internal::Triangulation::Iterators<dim, spacedim> IteratorSelector;
 
+  bool periodic;
 public:
+  bool is_periodic(){return periodic;}
+
   /**
    * Default manifold object. This is used for those objects for which no
    * boundary description has been explicitly set using set_manifold().
@@ -1779,7 +1782,8 @@ public:
    */
   virtual void create_triangulation (const std::vector<Point<spacedim> >    &vertices,
                                      const std::vector<CellData<dim> > &cells,
-                                     const SubCellData                 &subcelldata);
+                                     const SubCellData                 &subcelldata,
+				     const bool 			periodic = false);
 
   /**
    * For backward compatibility, only. This function takes the cell data in
